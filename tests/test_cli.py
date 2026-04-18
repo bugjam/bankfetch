@@ -5,7 +5,7 @@ from pathlib import Path
 
 import yaml
 
-from bankfetch.cli import _access_valid_until, app
+from bankfetch.cli import _access_valid_until, _session_valid_until, app
 
 
 def _seed_state(tmp_path: Path) -> None:
@@ -88,6 +88,13 @@ def test_auth_init_command_without_aspsp_id_uses_provider_object(runner, config_
 def test_access_valid_until_is_capped_by_aspsp_limit() -> None:
     valid_until = _access_valid_until(90, {"maximum_consent_validity": 3600})
     assert valid_until.endswith("+00:00")
+
+
+def test_session_valid_until_prefers_access_object() -> None:
+    assert (
+        _session_valid_until({"access": {"valid_until": "2026-07-17T07:39:18Z"}, "valid_until": None})
+        == "2026-07-17T07:39:18Z"
+    )
 
 
 def test_session_status_reauth_exit_code(runner, config_file: Path, mocker, respx_mock) -> None:

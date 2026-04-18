@@ -122,7 +122,7 @@ def auth_complete(
         session=SessionMetadata(
             session_id=session_id,
             status=session_payload.get("status", "AUTHORIZED"),
-            valid_until=session_payload.get("valid_until") or session_payload.get("expires_at"),
+            valid_until=_session_valid_until(session_payload),
             created_at=session_payload.get("created"),
             authorized_at=session_payload.get("authorized"),
         ),
@@ -145,7 +145,7 @@ def session_status(ctx: typer.Context) -> None:
         remote = client.get_session(session.session.session_id)
     status = remote.get("status", session.session.status)
     session.session.status = status
-    session.session.valid_until = remote.get("valid_until") or remote.get("expires_at")
+    session.session.valid_until = _session_valid_until(remote)
     store.save_active_session(session)
     typer.echo("Provider: enable_banking")
     typer.echo(f"Bank: {session.bank.aspsp_id}")
@@ -323,6 +323,11 @@ def _select_accounts(accounts: list[AccountState], all_accounts: bool, selected:
     if not wanted:
         raise BankfetchError("select accounts with --all-accounts or --account")
     return [account for account in accounts if account.account_key in wanted]
+
+
+def _session_valid_until(session_payload: dict) -> str | None:
+    access = session_payload.get("access") or {}
+    return access.get("valid_until") or session_payload.get("valid_until") or session_payload.get("expires_at")
 
 
 def main() -> None:
