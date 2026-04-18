@@ -45,8 +45,7 @@ def _config_and_store(ctx: typer.Context):
     state: Context = ctx.obj
     config = load_config(state.config_path)
     configure_logging(config.logging.level)
-    store = SessionStore(config.sync.state_dir, config.sync.output_dir)
-    return config, store
+    return config
 
 
 @app.callback()
@@ -59,23 +58,29 @@ def main_callback(
 
 
 @auth_app.command("init")
-def auth_init(ctx: typer.Context) -> None:
-    config, store = _config_and_store(ctx)
+def auth_init(
+    ctx: typer.Context,
+    session: Annotated[str | None, typer.Option("--session", help="Configured session profile")] = None,
+) -> None:
+    config = _config_and_store(ctx)
+    session_alias = _resolve_session_alias(config, session)
+    store = _session_store(config, session_alias)
+    session_config = config.get_session_config(session_alias)
     jwt_token = build_jwt(config)
     with enable_client(config, jwt_token) as client:
-        aspsp = _resolve_aspsp(config, client.list_aspsps())
+        aspsp = _resolve_aspsp(session_config.bank, client.list_aspsps())
         aspsp_id = _aspsp_identifier(aspsp)
         state = str(uuid4())
         payload = {
             "access": {
                 "balances": True,
                 "transactions": True,
-                "valid_until": _access_valid_until(config.bank.consent_days, aspsp),
+                "valid_until": _access_valid_until(session_config.bank.consent_days, aspsp),
             },
             "aspsp": aspsp,
             "state": state,
-            "redirect_url": str(config.bank.redirect_url),
-            "psu_type": config.bank.psu_type,
+            "redirect_url": str(session_config.bank.redirect_url),
+            "psu_type": session_config.bank.psu_type,
         }
         response = client.start_authorization(payload)
     auth_state = AuthInitState(
@@ -91,6 +96,7 @@ def auth_init(ctx: typer.Context) -> None:
         psu_id_hash=response.get("psu_id_hash"),
     )
     store.save_auth_init(auth_state)
+    typer.echo(f"Session: {session_alias}")
     typer.echo(f"Authorization URL: {auth_state.authorization_url}")
     typer.echo(f"State: {auth_state.state}")
     typer.echo(f"Created at: {auth_state.created_at}")
@@ -100,8 +106,11 @@ def auth_init(ctx: typer.Context) -> None:
 def auth_complete(
     ctx: typer.Context,
     code: Annotated[str, typer.Option("--code", help="Authorization code", prompt=False)],
+    session: Annotated[str | None, typer.Option("--session", help="Configured session profile")] = None,
 ) -> None:
-    config, store = _config_and_store(ctx)
+    config = _config_and_store(ctx)
+    session_alias = _resolve_session_alias(config, session)
+    store = _session_store(config, session_alias)
     auth_state = store.load_auth_init()
     jwt_token = build_jwt(config)
     with enable_client(config, jwt_token) as client:
@@ -130,6 +139,7 @@ def auth_complete(
     )
     store.save_active_session(active_session)
     store.save_checkpoints(Checkpoints())
+    typer.echo(f"Session: {session_alias}")
     typer.echo(f"Session ID: {active_session.session.session_id}")
     typer.echo(f"Status: {active_session.session.status}")
     typer.echo(f"Valid until: {active_session.session.valid_until or 'unknown'}")
@@ -137,22 +147,28 @@ def auth_complete(
 
 
 @session_app.command("status")
-def session_status(ctx: typer.Context) -> None:
-    config, store = _config_and_store(ctx)
-    session = store.load_active_session()
+def session_status(
+    ctx: typer.Context,
+    session_name: Annotated[str | None, typer.Option("--session", help="Configured session profile")] = None,
+) -> None:
+    config = _config_and_store(ctx)
+    session_alias = _resolve_session_alias(config, session_name)
+    store = _session_store(config, session_alias)
+    active_session = store.load_active_session()
     jwt_token = build_jwt(config)
     with enable_client(config, jwt_token) as client:
-        remote = client.get_session(session.session.session_id)
-    status = remote.get("status", session.session.status)
-    session.session.status = status
-    session.session.valid_until = _session_valid_until(remote)
-    store.save_active_session(session)
+        remote = client.get_session(active_session.session.session_id)
+    status = remote.get("status", active_session.session.status)
+    active_session.session.status = status
+    active_session.session.valid_until = _session_valid_until(remote)
+    store.save_active_session(active_session)
+    typer.echo(f"Session: {session_alias}")
     typer.echo("Provider: enable_banking")
-    typer.echo(f"Bank: {session.bank.aspsp_id}")
-    typer.echo(f"Session ID: {session.session.session_id}")
+    typer.echo(f"Bank: {active_session.bank.aspsp_id}")
+    typer.echo(f"Session ID: {active_session.session.session_id}")
     typer.echo(f"Remote status: {status}")
     typer.echo(f"Local active: {'yes' if status in {'AUTHORIZED', 'ACTIVE'} else 'no'}")
-    typer.echo(f"Valid until: {session.session.valid_until or 'unknown'}")
+    typer.echo(f"Valid until: {active_session.session.valid_until or 'unknown'}")
     if status in {"EXPIRED", "REVOKED"}:
         raise typer.Exit(code=exit_codes.REAUTH_REQUIRED)
     if status not in {"AUTHORIZED", "ACTIVE"}:
@@ -160,8 +176,13 @@ def session_status(ctx: typer.Context) -> None:
 
 
 @accounts_app.command("list")
-def accounts_list(ctx: typer.Context) -> None:
-    _, store = _config_and_store(ctx)
+def accounts_list(
+    ctx: typer.Context,
+    session: Annotated[str | None, typer.Option("--session", help="Configured session profile")] = None,
+) -> None:
+    config = _config_and_store(ctx)
+    session_alias = _resolve_session_alias(config, session)
+    store = _session_store(config, session_alias)
     session = store.load_active_session()
     for account in session.accounts:
         typer.echo(
@@ -181,10 +202,13 @@ def accounts_list(ctx: typer.Context) -> None:
 @balances_app.command("fetch")
 def balances_fetch(
     ctx: typer.Context,
+    session: Annotated[str | None, typer.Option("--session", help="Configured session profile")] = None,
     all_accounts: Annotated[bool, typer.Option("--all-accounts")] = False,
     account: Annotated[list[str], typer.Option("--account")] = [],
 ) -> None:
-    config, store = _config_and_store(ctx)
+    config = _config_and_store(ctx)
+    session_alias = _resolve_session_alias(config, session)
+    store = _session_store(config, session_alias)
     session = store.load_active_session()
     jwt_token = build_jwt(config)
     with enable_client(config, jwt_token) as client:
@@ -202,6 +226,7 @@ def balances_fetch(
 @transactions_app.command("fetch")
 def transactions_fetch(
     ctx: typer.Context,
+    session: Annotated[str | None, typer.Option("--session", help="Configured session profile")] = None,
     all_accounts: Annotated[bool, typer.Option("--all-accounts")] = False,
     account: Annotated[list[str], typer.Option("--account")] = [],
     from_date: Annotated[str | None, typer.Option("--from")] = None,
@@ -209,7 +234,9 @@ def transactions_fetch(
     status: Annotated[str, typer.Option("--status")] = "both",
     no_checkpoint_update: Annotated[bool, typer.Option("--no-checkpoint-update")] = False,
 ) -> None:
-    config, store = _config_and_store(ctx)
+    config = _config_and_store(ctx)
+    session_alias = _resolve_session_alias(config, session)
+    store = _session_store(config, session_alias)
     session = store.load_active_session()
     checkpoints = store.load_checkpoints()
     jwt_token = build_jwt(config)
@@ -265,26 +292,34 @@ def transactions_fetch(
 @sync_app.command("run")
 def sync_run(
     ctx: typer.Context,
+    session: Annotated[list[str], typer.Option("--session", help="Configured session profile to sync")] = [],
     all_accounts: Annotated[bool, typer.Option("--all-accounts")] = False,
     fail_fast: Annotated[bool, typer.Option("--fail-fast/--no-fail-fast")] = False,
     dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
 ) -> None:
-    config, _ = _config_and_store(ctx)
-    summary = run_sync(config, all_accounts=all_accounts, fail_fast=fail_fast, dry_run=dry_run)
+    config = _config_and_store(ctx)
+    session_aliases = _session_aliases_for_sync(config, session)
+    summary = run_sync(
+        config,
+        session_aliases=session_aliases,
+        all_accounts=all_accounts,
+        fail_fast=fail_fast,
+        dry_run=dry_run,
+    )
     typer.echo(
         f"Sync complete: balances={summary.balances_records} transactions={summary.transactions_records} failed={len(summary.failed_accounts)}"
     )
 
 
-def _resolve_aspsp(config, aspsps: list[dict]) -> dict:
-    if config.bank.aspsp.id:
+def _resolve_aspsp(bank_config, aspsps: list[dict]) -> dict:
+    if bank_config.aspsp.id:
         for item in aspsps:
-            if _aspsp_identifier(item) == config.bank.aspsp.id or item.get("id") == config.bank.aspsp.id:
+            if _aspsp_identifier(item) == bank_config.aspsp.id or item.get("id") == bank_config.aspsp.id:
                 return item
-    if config.bank.aspsp.name:
+    if bank_config.aspsp.name:
         for item in aspsps:
-            matches_name = item.get("name", "").lower() == config.bank.aspsp.name.lower()
-            matches_country = not config.bank.aspsp.country or item.get("country") == config.bank.aspsp.country
+            matches_name = item.get("name", "").lower() == bank_config.aspsp.name.lower()
+            matches_country = not bank_config.aspsp.country or item.get("country") == bank_config.aspsp.country
             if matches_name and matches_country:
                 return item
     raise BankfetchError("unable to resolve configured ASPSP")
@@ -328,6 +363,30 @@ def _select_accounts(accounts: list[AccountState], all_accounts: bool, selected:
 def _session_valid_until(session_payload: dict) -> str | None:
     access = session_payload.get("access") or {}
     return access.get("valid_until") or session_payload.get("valid_until") or session_payload.get("expires_at")
+
+
+def _resolve_session_alias(config, alias: str | None) -> str:
+    if alias:
+        if alias not in config.sessions:
+            raise BankfetchError(f"unknown session profile: {alias}")
+        return alias
+    if len(config.sessions) == 1:
+        return next(iter(config.sessions))
+    available = ", ".join(sorted(config.sessions))
+    raise BankfetchError(f"multiple session profiles configured; choose one with --session ({available})")
+
+
+def _session_aliases_for_sync(config, aliases: list[str]) -> list[str]:
+    if not aliases:
+        return list(config.sessions)
+    unknown = [alias for alias in aliases if alias not in config.sessions]
+    if unknown:
+        raise BankfetchError(f"unknown session profile(s): {', '.join(sorted(unknown))}")
+    return aliases
+
+
+def _session_store(config, alias: str) -> SessionStore:
+    return SessionStore(config.sync.state_dir, config.sync.output_dir, alias)
 
 
 def main() -> None:

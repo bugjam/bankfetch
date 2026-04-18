@@ -57,11 +57,15 @@ def config_file(tmp_path: Path, private_key: str) -> Path:
             "private_key_file": str(key_path),
             "timeout_seconds": 30,
         },
-        "bank": {
-            "aspsp": {"id": "bank-1", "name": "Nordea", "country": "DK"},
-            "psu_type": "personal",
-            "redirect_url": "http://127.0.0.1:8787/callback",
-            "consent_days": 90,
+        "sessions": {
+            "nordea": {
+                "bank": {
+                    "aspsp": {"id": "bank-1", "name": "Nordea", "country": "DK"},
+                    "psu_type": "personal",
+                    "redirect_url": "http://127.0.0.1:8787/callback",
+                    "consent_days": 90,
+                }
+            }
         },
         "sync": {
             "overlap_days": 3,
@@ -75,5 +79,52 @@ def config_file(tmp_path: Path, private_key: str) -> Path:
         "headers": {"psu_user_agent": "bankfetch-test/0.1"},
     }
     path = tmp_path / "config.yaml"
+    path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    return path
+
+
+@pytest.fixture()
+def multi_session_config_file(tmp_path: Path, private_key: str) -> Path:
+    key_path = tmp_path / "private.key"
+    key_path.write_text(private_key, encoding="utf-8")
+    config = {
+        "app_name": "bankfetch",
+        "provider": "enable_banking",
+        "api": {
+            "base_url": "https://api.enablebanking.com",
+            "app_id": "test-app",
+            "private_key_file": str(key_path),
+            "timeout_seconds": 30,
+        },
+        "sessions": {
+            "nordea": {
+                "bank": {
+                    "aspsp": {"id": "bank-1", "name": "Nordea", "country": "DK"},
+                    "psu_type": "personal",
+                    "redirect_url": "http://127.0.0.1:8787/callback",
+                    "consent_days": 90,
+                }
+            },
+            "lunar": {
+                "bank": {
+                    "aspsp": {"id": "bank-2", "name": "Lunar", "country": "DK"},
+                    "psu_type": "personal",
+                    "redirect_url": "http://127.0.0.1:8787/callback",
+                    "consent_days": 90,
+                }
+            },
+        },
+        "sync": {
+            "overlap_days": 3,
+            "output_dir": str(tmp_path / "out"),
+            "state_dir": str(tmp_path / "state"),
+            "raw_archive": True,
+            "normalized_format": "jsonl",
+            "initial_lookback_days": 30,
+        },
+        "logging": {"format": "json", "level": "info"},
+        "headers": {"psu_user_agent": "bankfetch-test/0.1"},
+    }
+    path = tmp_path / "multi-config.yaml"
     path.write_text(yaml.safe_dump(config), encoding="utf-8")
     return path

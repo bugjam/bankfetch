@@ -7,14 +7,25 @@ api:
   private_key_file: /etc/bankfetch/private.key
   timeout_seconds: 30
 
-bank:
-  aspsp:
-    id: null
-    name: Nordea
-    country: DK
-  psu_type: personal
-  redirect_url: http://127.0.0.1:8787/callback
-  consent_days: 90
+sessions:
+  nordea:
+    bank:
+      aspsp:
+        id: null
+        name: Nordea
+        country: DK
+      psu_type: personal
+      redirect_url: http://127.0.0.1:8787/callback
+      consent_days: 90
+  lunar:
+    bank:
+      aspsp:
+        id: null
+        name: Lunar
+        country: DK
+      psu_type: personal
+      redirect_url: http://127.0.0.1:8787/callback
+      consent_days: 90
 
 sync:
   overlap_days: 3

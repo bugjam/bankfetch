@@ -15,6 +15,7 @@ def test_load_config_validates_and_creates_dirs(config_file: Path) -> None:
     assert config.provider == "enable_banking"
     assert config.sync.state_dir.exists()
     assert config.sync.output_dir.exists()
+    assert "nordea" in config.sessions
 
 
 def test_load_config_rejects_missing_private_key(tmp_path: Path, config_file: Path) -> None:

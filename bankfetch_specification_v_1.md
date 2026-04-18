@@ -6,8 +6,8 @@
 
 Version 1 is intentionally limited in scope:
 
-- one active bank connection at a time
-- one active authorized session at a time
+- Enable Banking as the only provider
+- multiple named bank session profiles
 - read-only account information access
 - balance fetch
 - transaction fetch
@@ -16,10 +16,9 @@ Version 1 is intentionally limited in scope:
 - no categorization logic
 - no write/payment functionality
 
-The design must, however, make it easy to extend later to support:
+The design supports multiple active sessions in version 1 and must make it easy to extend later to support:
 
-- multiple banks
-- multiple active sessions
+- multiple providers
 - multiple accounts across banks
 - additional account data types
 
@@ -32,7 +31,7 @@ The application must:
 - authenticate against Enable Banking using the required JWT-based mechanism
 - support a one-time interactive authorization flow
 - support non-interactive recurring sync from cron after authorization is completed
-- fetch accounts, balances, and transactions from the active Enable Banking session
+- fetch accounts, balances, and transactions from one or more configured Enable Banking sessions
 - store raw and normalized output on disk
 - support incremental transaction sync
 - be deterministic, observable, and safe to run unattended
@@ -53,7 +52,6 @@ The following are explicitly out of scope for version 1:
 - automatic browser-based completion of bank authorization
 - built-in web server for OAuth callback handling
 - payment initiation
-- multi-bank sync in one run
 - background daemon mode
 - database storage
 - reconciliation across providers
@@ -83,11 +81,11 @@ Suggested internal modules:
 
 ### 4.2 Runtime model
 
-There are two phases:
+There are two phases per configured session profile:
 
 1. **Interactive setup phase**
 
-   - operator starts an authorization flow
+   - operator starts an authorization flow for a named session profile
    - operator opens the returned bank authorization URL
    - operator completes bank login and consent
    - operator extracts the returned authorization code
@@ -97,7 +95,7 @@ There are two phases:
 
    - cron invokes `bankfetch sync run`
    - CLI generates a fresh JWT
-   - CLI checks session validity
+   - CLI checks selected session validity
    - CLI fetches balances
    - CLI fetches transactions incrementally
    - CLI writes raw + normalized outputs
@@ -130,13 +128,13 @@ Integrate with Enable Banking API: [API reference | Enable Banking Docs](https:
 The CLI must support the following commands:
 
 ```bash
-bankfetch auth init
-bankfetch auth complete --code <authorization_code>
-bankfetch session status
-bankfetch accounts list
-bankfetch balances fetch
-bankfetch transactions fetch
-bankfetch sync run
+bankfetch auth init --session <profile>
+bankfetch auth complete --session <profile> --code <authorization_code>
+bankfetch session status --session <profile>
+bankfetch accounts list --session <profile>
+bankfetch balances fetch --session <profile>
+bankfetch transactions fetch --session <profile>
+bankfetch sync run [--session <profile> ...]
 ```
 
 Optional helper commands may be added if useful, but the commands above are required.
@@ -154,6 +152,7 @@ Start an interactive authorization flow.
 The command must:
 
 - load config
+- resolve the target session profile
 - generate a short-lived JWT for API authentication
 - query Enable Banking for candidate banks if needed
 - select the configured bank / ASPSP
@@ -165,6 +164,7 @@ The command must:
 
 Required or configurable inputs:
 
+- session profile name
 - bank / ASPSP identifier or bank selection config
 - redirect URL
 - consent validity window
@@ -177,6 +177,7 @@ Human-readable output by default, JSON output optional.
 
 Minimum output must include:
 
+- selected session profile
 - generated authorization URL
 - locally generated state value
 - timestamp
@@ -202,11 +203,12 @@ The command must:
 - submit the authorization code to Enable Banking
 - create a session
 - fetch or store session metadata
-- persist the session as the active session
+- persist the session as the active session for the selected profile
 - initialize state for future syncs
 
 ### Required arguments
 
+- `--session <profile>`
 - `--code <authorization_code>`
 
 ### Output
@@ -222,9 +224,9 @@ Must return or print at least:
 
 Must write/update:
 
-- active session metadata
+- active session metadata for the selected profile
 - account list for the session
-- sync checkpoint container
+- sync checkpoint container for the selected profile
 
 ---
 
@@ -232,7 +234,7 @@ Must write/update:
 
 ### Purpose
 
-Show whether the currently stored session is usable.
+Show whether the currently stored session for a selected profile is usable.
 
 ### Behavior
 
@@ -246,6 +248,7 @@ The command must:
 
 Must include:
 
+- selected session profile
 - provider name (`enable_banking`)
 - bank identifier / ASPSP metadata if available
 - session ID
@@ -265,7 +268,7 @@ Must include:
 
 ### Purpose
 
-List accounts known for the active session.
+List accounts known for the selected active session profile.
 
 ### Behavior
 
@@ -367,9 +370,9 @@ Required steps:
 1. load config
 2. acquire a process lock to avoid concurrent runs
 3. generate fresh JWT
-4. validate active session
-5. fetch balances for all active accounts
-6. fetch transactions incrementally for all active accounts
+4. validate each selected active session
+5. fetch balances for all active accounts in each selected session
+6. fetch transactions incrementally for all active accounts in each selected session
 7. write raw outputs
 8. write normalized outputs
 9. atomically update checkpoints only after success
@@ -379,6 +382,7 @@ Required steps:
 
 Must support at least:
 
+- `--session <profile>` (repeatable, optional; defaults to all configured profiles)
 - `--all-accounts`
 - `--fail-fast / --no-fail-fast`
 - `--dry-run` (optional helper)
@@ -424,14 +428,25 @@ api:
   private_key_file: /etc/bankfetch/private.key
   timeout_seconds: 30
 
-bank:
-  aspsp:
-    id: null
-    name: Nordea
-    country: DK
-  psu_type: personal
-  redirect_url: http://127.0.0.1:8787/callback
-  consent_days: 90
+sessions:
+  nordea:
+    bank:
+      aspsp:
+        id: null
+        name: Nordea
+        country: DK
+      psu_type: personal
+      redirect_url: http://127.0.0.1:8787/callback
+      consent_days: 90
+  lunar:
+    bank:
+      aspsp:
+        id: null
+        name: Lunar
+        country: DK
+      psu_type: personal
+      redirect_url: http://127.0.0.1:8787/callback
+      consent_days: 90
 
 sync:
   overlap_days: 3
@@ -457,6 +472,7 @@ The application must validate on startup:
 - private key file exists and is readable
 - output/state directories exist or can be created
 - `provider == enable_banking` in v1
+- at least one session profile is configured
 - consent days is positive
 - overlap days is non-negative
 
@@ -469,9 +485,9 @@ Default state layout:
 ```text
 /var/lib/bankfetch/
   state/
-    active_session.json
-    auth_init.json
-    checkpoints.json
+    active_session_<profile>.json
+    auth_init_<profile>.json
+    checkpoints_<profile>.json
     lock/
   out/
     raw/
@@ -493,7 +509,7 @@ The implementation may choose a slightly different layout, but it must preserve 
 
 ## 9. Data model requirements
 
-Version 1 only supports one bank connection at runtime, but the stored data model must already be shaped for future multi-bank support.
+Version 1 supports multiple named session profiles at runtime, and the stored data model must remain shaped for multi-bank support.
 
 This means normalized records must include stable top-level fields that identify:
 
@@ -549,15 +565,15 @@ Example:
 enable_banking:nordea-dk:497f6eca-6276-4993-bfeb-53cbbbba6f08
 ```
 
-This avoids redesign later when multiple banks are added.
+This avoids redesign later when multiple banks and sessions are active in the same installation.
 
 ---
 
 ## 11. Required stored files and schemas
 
-## 11.1 `active_session.json`
+## 11.1 `active_session_<profile>.json`
 
-Purpose: store the currently active session.
+Purpose: store the currently active session for one configured profile.
 
 Example shape:
 
@@ -590,9 +606,9 @@ Example shape:
 }
 ```
 
-## 11.2 `checkpoints.json`
+## 11.2 `checkpoints_<profile>.json`
 
-Purpose: store per-account sync progress.
+Purpose: store per-account sync progress for one configured profile.
 
 Example shape:
 
@@ -920,38 +936,38 @@ The implementation is acceptable for v1 when all of the following are true.
 
 ### 20.1 Authorization flow
 
-- operator can run `bankfetch auth init`
+- operator can run `bankfetch auth init --session <profile>`
 - CLI outputs a bank authorization URL
 - operator can complete bank authorization manually
-- operator can run `bankfetch auth complete --code ...`
-- active session is stored locally
+- operator can run `bankfetch auth complete --session <profile> --code ...`
+- active session is stored locally per profile
 
 ### 20.2 Session status
 
-- `bankfetch session status` reports usable vs unusable session correctly
+- `bankfetch session status --session <profile>` reports usable vs unusable session correctly
 - command returns exit code `20` when reauthorization is required
 
 ### 20.3 Account listing
 
-- `bankfetch accounts list` prints accounts from the active session
+- `bankfetch accounts list --session <profile>` prints accounts from the active session
 - each account has a stable future-proof `account_key`
 
 ### 20.4 Balance fetch
 
-- `bankfetch balances fetch --all-accounts` fetches balances for all accounts
+- `bankfetch balances fetch --session <profile> --all-accounts` fetches balances for all accounts
 - raw files are stored
 - normalized balance records are written with provider and bank identifiers included
 
 ### 20.5 Transaction fetch
 
-- `bankfetch transactions fetch --all-accounts --from YYYY-MM-DD --to YYYY-MM-DD` fetches all pages of transactions
+- `bankfetch transactions fetch --session <profile> --all-accounts --from YYYY-MM-DD --to YYYY-MM-DD` fetches all pages of transactions
 - raw payloads are archived
 - normalized transaction records are written
 - rerunning with overlapping dates does not produce duplicates in the latest normalized view
 
 ### 20.6 Sync run
 
-- `bankfetch sync run --all-accounts` can run unattended from cron
+- `bankfetch sync run --all-accounts` can run unattended from cron across all configured profiles
 - concurrent execution is prevented by locking
 - checkpoints are updated only after successful writes
 - logs are structured
@@ -1008,7 +1024,6 @@ The coding agent should produce:
 
 ## 24. Implementation note to the coding agent
 
-Even though v1 only supports one active bank connection at runtime, **all normalized records and internal account identifiers must already include provider and bank identity** so that a future v2 can support multiple banks without breaking stored file formats.
+Even though v1 is limited to Enable Banking, **all normalized records and internal account identifiers must already include provider and bank identity** so that a future v2 can support multiple banks without breaking stored file formats.
 
 That requirement is mandatory and should take precedence over simplistic v1-only shortcuts.
-

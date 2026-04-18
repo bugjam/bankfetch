@@ -27,8 +27,8 @@ def _seed_state(tmp_path: Path) -> None:
         ],
     }
     checkpoints_payload = {"version": 1, "accounts": {}}
-    (state_dir / "active_session.json").write_text(yaml.safe_dump(session_payload), encoding="utf-8")
-    (state_dir / "checkpoints.json").write_text(yaml.safe_dump(checkpoints_payload), encoding="utf-8")
+    (state_dir / "active_session_nordea.json").write_text(yaml.safe_dump(session_payload), encoding="utf-8")
+    (state_dir / "checkpoints_nordea.json").write_text(yaml.safe_dump(checkpoints_payload), encoding="utf-8")
 
 
 def test_auth_init_command(runner, config_file: Path, mocker, respx_mock) -> None:
@@ -49,6 +49,7 @@ def test_auth_init_command(runner, config_file: Path, mocker, respx_mock) -> Non
     respx_mock.post("https://api.enablebanking.com/auth").mock(side_effect=assert_auth_request)
     result = runner.invoke(app, ["--config", str(config_file), "auth", "init"])
     assert result.exit_code == 0
+    assert "Session: nordea" in result.stdout
     assert "Authorization URL: https://example.test/auth" in result.stdout
     assert "valid_until" in captured["json"]["access"]
 
@@ -107,7 +108,7 @@ def test_session_status_reauth_exit_code(runner, config_file: Path, mocker, resp
         "session": {"session_id": "sess-1", "status": "AUTHORIZED", "valid_until": None, "created_at": None},
         "accounts": [],
     }
-    (state_dir / "active_session.json").write_text(__import__("json").dumps(active_session), encoding="utf-8")
+    (state_dir / "active_session_nordea.json").write_text(__import__("json").dumps(active_session), encoding="utf-8")
     mocker.patch("bankfetch.cli.build_jwt", return_value="jwt")
     respx_mock.get("https://api.enablebanking.com/sessions/sess-1").respond(200, json={"status": "EXPIRED"})
     result = runner.invoke(app, ["--config", str(config_file), "session", "status"])
@@ -133,7 +134,46 @@ def test_accounts_list_command(runner, config_file: Path) -> None:
             }
         ],
     }
-    (state_dir / "active_session.json").write_text(__import__("json").dumps(active_session), encoding="utf-8")
+    (state_dir / "active_session_nordea.json").write_text(__import__("json").dumps(active_session), encoding="utf-8")
     result = runner.invoke(app, ["--config", str(config_file), "accounts", "list"])
     assert result.exit_code == 0
     assert "enable_banking:bank-1:acct-1" in result.stdout
+
+
+def test_auth_init_requires_session_for_multi_profile_config(runner, multi_session_config_file: Path) -> None:
+    result = runner.invoke(app, ["--config", str(multi_session_config_file), "auth", "init"])
+    assert result.exit_code != 0
+    assert isinstance(result.exception, Exception)
+    assert "multiple session profiles configured" in str(result.exception)
+
+
+def test_accounts_list_uses_selected_session_profile(runner, multi_session_config_file: Path) -> None:
+    config = yaml.safe_load(multi_session_config_file.read_text(encoding="utf-8"))
+    state_dir = Path(config["sync"]["state_dir"])
+    state_dir.mkdir(parents=True, exist_ok=True)
+    nordea = {
+        "provider": "enable_banking",
+        "bank": {"aspsp_id": "bank-1", "display_name": "Nordea", "country_code": "DK"},
+        "session": {"session_id": "sess-1", "status": "AUTHORIZED", "valid_until": None, "created_at": None},
+        "accounts": [],
+    }
+    lunar = {
+        "provider": "enable_banking",
+        "bank": {"aspsp_id": "bank-2", "display_name": "Lunar", "country_code": "DK"},
+        "session": {"session_id": "sess-2", "status": "AUTHORIZED", "valid_until": None, "created_at": None},
+        "accounts": [
+            {
+                "account_key": "enable_banking:bank-2:acct-2",
+                "provider_account_uid": "acct-2",
+                "display_name": "Lunar Main",
+                "currency": "DKK",
+                "account_type": "payment",
+                "identifiers": {"iban_masked": "DK98****76", "other_masked": []},
+            }
+        ],
+    }
+    (state_dir / "active_session_nordea.json").write_text(__import__("json").dumps(nordea), encoding="utf-8")
+    (state_dir / "active_session_lunar.json").write_text(__import__("json").dumps(lunar), encoding="utf-8")
+    result = runner.invoke(app, ["--config", str(multi_session_config_file), "accounts", "list", "--session", "lunar"])
+    assert result.exit_code == 0
+    assert "enable_banking:bank-2:acct-2" in result.stdout

@@ -45,6 +45,8 @@ def validate_config(config: AppConfig) -> AppConfig:
         raise ConfigError(f"state_dir is not writable: {config.sync.state_dir}")
     if not _is_writable_directory(config.sync.output_dir):
         raise ConfigError(f"output_dir is not writable: {config.sync.output_dir}")
+    if not config.sessions:
+        raise ConfigError("at least one session profile must be configured")
     return config
 
 
@@ -60,4 +62,3 @@ def load_config(path: Path | None = None) -> AppConfig:
     except Exception as exc:  # noqa: BLE001
         raise ConfigError(f"invalid configuration: {exc}") from exc
     return validate_config(config)
-

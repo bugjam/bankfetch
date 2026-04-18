@@ -33,18 +33,18 @@ Start from [examples/config.yaml](examples/config.yaml) and replace:
 
 - `api.app_id`
 - `api.private_key_file`
-- `bank.aspsp`
-- `bank.redirect_url`
+- `sessions.<name>.bank.aspsp`
+- `sessions.<name>.bank.redirect_url`
 
 ## Commands
 
 ```text
-bankfetch auth init
-bankfetch auth complete --code <authorization_code>
-bankfetch session status
-bankfetch accounts list
-bankfetch balances fetch --all-accounts
-bankfetch transactions fetch --all-accounts --from 2026-04-01 --to 2026-04-18
+bankfetch auth init --session nordea
+bankfetch auth complete --session nordea --code <authorization_code>
+bankfetch session status --session nordea
+bankfetch accounts list --session nordea
+bankfetch balances fetch --session nordea --all-accounts
+bankfetch transactions fetch --session nordea --all-accounts --from 2026-04-01 --to 2026-04-18
 bankfetch sync run --all-accounts
 ```
 
@@ -53,18 +53,21 @@ bankfetch sync run --all-accounts
 ```text
 /var/lib/bankfetch/
   state/
-    active_session.json
-    auth_init.json
-    checkpoints.json
+    active_session_nordea.json
+    auth_init_nordea.json
+    checkpoints_nordea.json
+    active_session_lunar.json
+    auth_init_lunar.json
+    checkpoints_lunar.json
     lock/sync.lock
   out/
     raw/
       balances/YYYY/MM/DD/<account_key>/<timestamp>.json
       transactions/YYYY/MM/DD/<account_key>/<timestamp>_page_<n>.json
     normalized/
-      balances/<account_key>.jsonl
-      transactions/<account_key>.jsonl
-      transactions/<account_key>_latest.jsonl
+      balances/<session>__<account_key>.jsonl
+      transactions/<session>__<account_key>.jsonl
+      transactions/<session>__<account_key>_latest.jsonl
 ```
 
 ## Security notes

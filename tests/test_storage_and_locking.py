@@ -11,7 +11,7 @@ from bankfetch.session_store import SessionStore
 
 
 def test_session_store_round_trips_session_and_checkpoints(tmp_path: Path) -> None:
-    store = SessionStore(tmp_path / "state", tmp_path / "out")
+    store = SessionStore(tmp_path / "state", tmp_path / "out", "nordea")
     session = ActiveSession(
         bank=BankIdentity(aspsp_id="bank-1", display_name="Nordea", country_code="DK"),
         session=SessionMetadata(session_id="sess-1", status="AUTHORIZED"),
@@ -22,6 +22,7 @@ def test_session_store_round_trips_session_and_checkpoints(tmp_path: Path) -> No
     store.save_checkpoints(checkpoints)
     assert store.load_active_session().session.session_id == "sess-1"
     assert store.load_checkpoints().version == 1
+    assert store.active_session_path.name == "active_session_nordea.json"
 
 
 def test_lock_contention_raises(tmp_path: Path) -> None:

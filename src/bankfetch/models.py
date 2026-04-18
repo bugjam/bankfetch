@@ -4,7 +4,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
 from .utils import mask_identifier
 
@@ -75,14 +75,30 @@ class HeadersConfig(BaseModel):
     psu_geo_location: str | None = None
 
 
+class SessionConfig(BaseModel):
+    bank: BankConfig
+
+
 class AppConfig(BaseModel):
     app_name: str = "bankfetch"
     provider: Literal["enable_banking"] = "enable_banking"
     api: ApiConfig
-    bank: BankConfig
+    bank: BankConfig | None = None
+    sessions: dict[str, SessionConfig] = Field(default_factory=dict)
     sync: SyncConfig = Field(default_factory=SyncConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     headers: HeadersConfig = Field(default_factory=HeadersConfig)
+
+    @model_validator(mode="after")
+    def ensure_sessions(self) -> "AppConfig":
+        if not self.sessions:
+            if self.bank is None:
+                raise ValueError("configuration must define either bank or sessions")
+            self.sessions = {"default": SessionConfig(bank=self.bank)}
+        return self
+
+    def get_session_config(self, alias: str) -> SessionConfig:
+        return self.sessions[alias]
 
 
 class BankIdentity(BaseModel):
@@ -224,4 +240,3 @@ class SyncSummary(BaseModel):
 class TransactionFetchWindow(BaseModel):
     from_date: date
     to_date: date
-

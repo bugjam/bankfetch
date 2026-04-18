@@ -10,21 +10,34 @@ from .utils import append_jsonl, ensure_directory, read_json_file, read_jsonl, s
 
 
 class SessionStore:
-    def __init__(self, state_dir: Path, output_dir: Path):
+    def __init__(self, state_dir: Path, output_dir: Path, session_alias: str = "default"):
         self.state_dir = ensure_directory(state_dir)
         self.output_dir = ensure_directory(output_dir)
+        self.session_alias = sanitize_filename(session_alias)
+
+    @property
+    def state_prefix(self) -> str:
+        if self.session_alias == "default":
+            return ""
+        return f"_{self.session_alias}"
+
+    @property
+    def output_prefix(self) -> str:
+        if self.session_alias == "default":
+            return ""
+        return f"{self.session_alias}__"
 
     @property
     def active_session_path(self) -> Path:
-        return self.state_dir / "active_session.json"
+        return self.state_dir / f"active_session{self.state_prefix}.json"
 
     @property
     def auth_init_path(self) -> Path:
-        return self.state_dir / "auth_init.json"
+        return self.state_dir / f"auth_init{self.state_prefix}.json"
 
     @property
     def checkpoints_path(self) -> Path:
-        return self.state_dir / "checkpoints.json"
+        return self.state_dir / f"checkpoints{self.state_prefix}.json"
 
     @property
     def lock_dir(self) -> Path:
@@ -70,18 +83,27 @@ class SessionStore:
         return path
 
     def append_normalized(self, category: str, account_key: str, records: list[dict[str, Any]]) -> Path:
-        path = self.output_dir / "normalized" / category / f"{sanitize_filename(account_key)}.jsonl"
+        path = self.output_dir / "normalized" / category / f"{self.output_prefix}{sanitize_filename(account_key)}.jsonl"
         append_jsonl(path, records)
         return path
 
     def write_latest_transactions(self, account_key: str, records: list[dict[str, Any]]) -> Path:
-        path = self.output_dir / "normalized" / "transactions" / f"{sanitize_filename(account_key)}_latest.jsonl"
+        path = (
+            self.output_dir
+            / "normalized"
+            / "transactions"
+            / f"{self.output_prefix}{sanitize_filename(account_key)}_latest.jsonl"
+        )
         ensure_directory(path.parent)
         path.write_text("", encoding="utf-8")
         append_jsonl(path, records)
         return path
 
     def read_latest_transactions(self, account_key: str) -> list[dict[str, Any]]:
-        path = self.output_dir / "normalized" / "transactions" / f"{sanitize_filename(account_key)}_latest.jsonl"
+        path = (
+            self.output_dir
+            / "normalized"
+            / "transactions"
+            / f"{self.output_prefix}{sanitize_filename(account_key)}_latest.jsonl"
+        )
         return read_jsonl(path)
-
