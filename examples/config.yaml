@@ -1,0 +1,33 @@
+app_name: bankfetch
+provider: enable_banking
+
+api:
+  base_url: https://api.enablebanking.com
+  app_id: YOUR_ENABLE_BANKING_APPLICATION_ID
+  private_key_file: /etc/bankfetch/private.key
+  timeout_seconds: 30
+
+bank:
+  aspsp:
+    id: null
+    name: Nordea
+    country: DK
+  psu_type: personal
+  redirect_url: http://127.0.0.1:8787/callback
+  consent_days: 90
+
+sync:
+  overlap_days: 3
+  output_dir: /var/lib/bankfetch/out
+  state_dir: /var/lib/bankfetch/state
+  raw_archive: true
+  normalized_format: jsonl
+  initial_lookback_days: 30
+
+logging:
+  format: json
+  level: info
+
+headers:
+  psu_ip_address: null
+  psu_user_agent: bankfetch/0.1

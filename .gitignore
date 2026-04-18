@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.pyo
+*.pyd
+dist/
+build/
+htmlcov/
+coverage.xml
+*.log
+tmp/
