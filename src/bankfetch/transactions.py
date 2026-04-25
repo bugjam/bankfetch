@@ -112,8 +112,20 @@ def normalize_transactions_page(
 
 def dedupe_transactions(records: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     deduped: dict[str, dict[str, Any]] = {}
+    semantic_index: dict[str, str] = {}
     for record in records:
-        deduped[record["dedupe_key"]] = record
+        canonical_key = record["dedupe_key"]
+        semantic_key = _record_semantic_dedupe_key(record)
+        if canonical_key in deduped:
+            deduped[canonical_key] = _prefer_transaction_record(deduped[canonical_key], record)
+            continue
+        if semantic_key and semantic_key in semantic_index:
+            existing_key = semantic_index[semantic_key]
+            deduped[existing_key] = _prefer_transaction_record(deduped[existing_key], record)
+            continue
+        deduped[canonical_key] = record
+        if semantic_key:
+            semantic_index[semantic_key] = canonical_key
     return list(deduped.values())
 
 
@@ -187,3 +199,37 @@ def _extract_transaction_code(transaction: dict[str, Any]) -> str | None:
         return str(direct)
     bank_code = transaction.get("bank_transaction_code") or {}
     return bank_code.get("description") or bank_code.get("code") or bank_code.get("sub_code")
+
+
+def _record_semantic_dedupe_key(record: dict[str, Any]) -> str | None:
+    if record.get("transaction_id"):
+        return None
+    booking_date = record.get("booking_date")
+    amount = record.get("amount")
+    currency = record.get("currency")
+    credit_debit_indicator = record.get("credit_debit_indicator")
+    if not all([booking_date, amount, currency, credit_debit_indicator]):
+        return None
+    return sha256_text(
+        [
+            record.get("account_key"),
+            booking_date,
+            record.get("value_date"),
+            amount,
+            currency,
+            credit_debit_indicator,
+            record.get("counterparty_name"),
+            record.get("remittance_information"),
+            record.get("proprietary_bank_transaction_code"),
+        ]
+    )
+
+
+def _prefer_transaction_record(current: dict[str, Any], candidate: dict[str, Any]) -> dict[str, Any]:
+    if candidate.get("transaction_id") and not current.get("transaction_id"):
+        return candidate
+    if current.get("transaction_id") and not candidate.get("transaction_id"):
+        return current
+    if candidate.get("fetched_at", "") >= current.get("fetched_at", ""):
+        return candidate
+    return current
